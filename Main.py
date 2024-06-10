@@ -1,7 +1,7 @@
 import os
 import random
 import tkinter as tk
-from tkinter import filedialog
+from tkinter import filedialog, Scale
 from tkinter import *
 import vlc
 
@@ -17,6 +17,7 @@ class MusicPlayer:
         self.last_dir = "/"
         self.file_dialog_open = False  # Flag to track if file dialog is open
         self.control_frame_visible = True  # Flag to track if the control frame is visible
+        self.current_song_index = -1  # Track the current song index
 
         # Create frame for VLC video
         self.vlc_frame = tk.Frame(root)
@@ -51,9 +52,35 @@ class MusicPlayer:
         self.listbox = Listbox(self.control_frame)
         self.listbox.grid(row=4, column=0, padx=10, pady=10)
 
+        # Create frame for media controls
+        self.media_controls = tk.Frame(root)
+        self.media_controls.grid(row=1, column=0, columnspan=2, pady=10)
+
+        # Adding control buttons
+        self.button_rewind = Button(self.media_controls, text='<< Rewind', command=self.rewind)
+        self.button_rewind.grid(row=0, column=0, padx=5)
+
+        self.button_play_pause = Button(self.media_controls, text='Play', command=self.toggle_play_pause)
+        self.button_play_pause.grid(row=0, column=1, padx=5)
+
+        self.button_forward = Button(self.media_controls, text='Fast Forward >>', command=self.fast_forward)
+        self.button_forward.grid(row=0, column=2, padx=5)
+
+        self.button_prev_track = Button(self.media_controls, text='<< Previous', command=self.prev_track)
+        self.button_prev_track.grid(row=0, column=3, padx=5)
+
+        self.button_next_track = Button(self.media_controls, text='Next >>', command=self.next_track)
+        self.button_next_track.grid(row=0, column=4, padx=5)
+
+        # Adding a volume control
+        self.volume_control = Scale(self.media_controls, from_=0, to=100, orient=HORIZONTAL, command=self.set_volume)
+        self.volume_control.set(50)  # Set default volume to 50%
+        self.volume_control.grid(row=0, column=5, padx=5)
+
         self.root.columnconfigure(0, weight=1)
         self.root.columnconfigure(1, weight=1)
         self.root.rowconfigure(0, weight=1)
+        self.root.rowconfigure(1, weight=0)
 
         # Bind mouse events to control frame visibility
         self.vlc_frame.bind("<Enter>", self.hide_control_frame)
@@ -92,9 +119,47 @@ class MusicPlayer:
         probabilities = [p/total for p in probabilities]
         selected_song = random.choices(self.playlist, probabilities)[0]
 
+        self.current_song_index = self.playlist.index(selected_song)  # Update current song index
+
         media = self.instance.media_new(selected_song.path)
         self.media_player.set_media(media)
         self.media_player.play()
+
+    def toggle_play_pause(self):
+        if self.media_player.is_playing():
+            self.media_player.pause()
+            self.button_play_pause.config(text="Play")
+        else:
+            self.media_player.play()
+            self.button_play_pause.config(text="Pause")
+
+    def rewind(self):
+        current_time = self.media_player.get_time()
+        self.media_player.set_time(max(0, current_time - 5000))
+
+    def fast_forward(self):
+        current_time = self.media_player.get_time()
+        self.media_player.set_time(current_time + 5000)
+
+    def prev_track(self):
+        if self.playlist and self.current_song_index > 0:
+            self.current_song_index -= 1
+            self.play_selected_song()
+
+    def next_track(self):
+        if self.playlist and self.current_song_index < len(self.playlist) - 1:
+            self.current_song_index += 1
+            self.play_selected_song()
+
+    def play_selected_song(self):
+        selected_song = self.playlist[self.current_song_index]
+        media = self.instance.media_new(selected_song.path)
+        self.media_player.set_media(media)
+        self.media_player.play()
+        self.button_play_pause.config(text="Pause")
+
+    def set_volume(self, volume):
+        self.media_player.audio_set_volume(int(volume))
 
     def hide_control_frame(self, event=None):
         if not self.file_dialog_open:
