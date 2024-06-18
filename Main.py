@@ -5,6 +5,11 @@ from tkinter import filedialog, Scale
 from tkinter import *
 import vlc
 
+#TODO make it so the pane on the right and the pane for the player controls overlay instead of push out of the way.
+#TODO add a counter (can be true/false) just to keep track of the first instance of a video being played so that both panes won't always appear when the video is paused
+# also as an extension or an alternate solution see if there is another better vlc function for this or make the player pause/play button work differently 
+# make the play button on the right pane be either play or stop and set a T/F variable to show/hide the panes based on that! ie: true means video is playing and don't always show the panes and vice versa
+
 class Song:
     def __init__(self, path, priority=50):
         self.path = path
@@ -16,8 +21,11 @@ class MusicPlayer:
         self.root = root
         self.last_dir = "/"
         self.file_dialog_open = False  # Flag to track if file dialog is open
-        self.control_frame_visible = True  # Flag to track if the control frame is visible
+        self.control_frame_visible = True  # Start with the control frame visible
         self.current_song_index = -1  # Track the current song index
+        self.full_screen = False  # Flag to track full screen state
+        self.cursor_position_unchanged_counter = 0
+        self.previous_cursor_position = (-1, -1)  # Initialize previous cursor position
 
         # Create frame for VLC video
         self.vlc_frame = tk.Frame(root)
@@ -26,7 +34,8 @@ class MusicPlayer:
         # VLC initialization
         self.instance = vlc.Instance()
         self.media_player = self.instance.media_player_new()
-        self.media_player.set_hwnd(self.vlc_frame.winfo_id())  # Set the window ID where VLC should render
+
+        root.after(0, self.set_vlc_window)
 
         # Create frame for controls and playlist
         self.control_frame = tk.Frame(root)
@@ -52,9 +61,9 @@ class MusicPlayer:
         self.listbox = Listbox(self.control_frame)
         self.listbox.grid(row=4, column=0, padx=10, pady=10)
 
-        # Create frame for media controls
+        # Create frame for media controls directly below the VLC frame
         self.media_controls = tk.Frame(root)
-        self.media_controls.grid(row=1, column=0, columnspan=2, pady=10)
+        self.media_controls.grid(row=1, column=0, columnspan=2, sticky="ew")
 
         # Adding control buttons
         self.button_rewind = Button(self.media_controls, text='<< Rewind', command=self.rewind)
@@ -74,20 +83,26 @@ class MusicPlayer:
 
         # Adding a volume control
         self.volume_control = Scale(self.media_controls, from_=0, to=100, orient=HORIZONTAL, command=self.set_volume)
-        self.volume_control.set(50)  # Set default volume to 50%
+        self.volume_control.set(60)  # Set default volume to 50%
         self.volume_control.grid(row=0, column=5, padx=5)
 
         self.root.columnconfigure(0, weight=1)
-        self.root.columnconfigure(1, weight=1)
+        self.root.columnconfigure(1, weight=0)
         self.root.rowconfigure(0, weight=1)
         self.root.rowconfigure(1, weight=0)
 
-        # Bind mouse events to control frame visibility
-        self.vlc_frame.bind("<Enter>", self.hide_control_frame)
-        self.control_frame.bind("<Enter>", self.show_control_frame)
-        self.vlc_frame.bind("<Leave>", self.show_control_frame)
-        self.control_frame.bind("<Leave>", self.hide_control_frame)
-        self.root.bind("<Motion>", self.handle_mouse_motion)
+        # Timer for hiding controls
+        self.hide_controls_timer = None
+
+        # Start polling for mouse position
+        self.poll_mouse_position()
+
+        # Show the control frame initially
+        self.show_control_frame()
+
+
+    def set_vlc_window(self):
+        self.media_player.set_hwnd(self.vlc_frame.winfo_id())
 
     def browseFiles(self, event=None):
         self.file_dialog_open = True  # Set flag to indicate file dialog is open
@@ -124,6 +139,7 @@ class MusicPlayer:
         media = self.instance.media_new(selected_song.path)
         self.media_player.set_media(media)
         self.media_player.play()
+        self.button_play_pause.config(text="Pause")
 
     def toggle_play_pause(self):
         if self.media_player.is_playing():
@@ -161,22 +177,65 @@ class MusicPlayer:
     def set_volume(self, volume):
         self.media_player.audio_set_volume(int(volume))
 
-    def hide_control_frame(self, event=None):
-        if not self.file_dialog_open:
-            self.control_frame.grid_forget()
-            self.control_frame_visible = False
+    def hide_control_frame(self):
+       if self.control_frame_visible:
+           self.control_frame.grid_remove()
+           self.control_frame_visible = False
 
     def show_control_frame(self, event=None):
-        if not self.control_frame_visible and not self.file_dialog_open:
-            self.control_frame.grid(row=0, column=1, sticky="nsew")
-            self.control_frame_visible = True
+       if not self.control_frame_visible and not self.file_dialog_open:
+           self.control_frame.grid(row=0, column=1, sticky="nsew")
+           self.control_frame_visible = True
 
-    def handle_mouse_motion(self, event):
+    def hide_controls(self):
+        self.media_controls.grid_remove()
+        self.hide_controls_timer = None
+
+    def show_controls(self, event=None):
+        self.media_controls.grid(row=1, column=0, columnspan=2, sticky="ew")
+        if self.hide_controls_timer:
+            self.root.after_cancel(self.hide_controls_timer)
+        self.hide_controls_timer = self.root.after(4000, self.hide_controls)  # Schedule to hide controls after 4 seconds
+
+    def poll_mouse_position(self):
+        # Get the mouse position relative to the root window
+        mouse_x = self.root.winfo_pointerx() - self.root.winfo_rootx()
+        mouse_y = self.root.winfo_pointery() - self.root.winfo_rooty()
+
         window_width = self.root.winfo_width()
-        mouse_x = event.x_root - self.root.winfo_rootx()
 
-        if mouse_x >= window_width - 10:  # Adjust this threshold as needed
+        # Get the mouse position relative to the VLC video area
+        cursor_position = self.media_player.video_get_cursor()
+
+        if self.media_player.is_playing():
+            # Check if the cursor position is the same as the previous position
+            if cursor_position == self.previous_cursor_position:
+                self.cursor_position_unchanged_counter += 1
+            else:
+                self.cursor_position_unchanged_counter = 0
+
+            self.previous_cursor_position = cursor_position
+
+            # If the cursor position is unchanged for 40 checks (4 seconds), hide the controls
+            if self.cursor_position_unchanged_counter >= 40:
+                self.hide_controls()
+            else:
+                self.show_controls()
+
+            # Check if mouse is near the right edge for context menu visibility
+            if mouse_x >= window_width - 100:
+                self.show_control_frame()
+            else:
+                self.hide_control_frame()
+
+        else:
+            # Reset the counter and make sure the controls are visible while the video is not playing
+            self.cursor_position_unchanged_counter = 0
+            self.show_controls()
             self.show_control_frame()
+
+        # Schedule the next poll
+        self.root.after(100, self.poll_mouse_position)
 
 # Create the root window
 root = Tk()
