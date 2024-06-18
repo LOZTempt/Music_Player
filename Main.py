@@ -5,10 +5,10 @@ from tkinter import filedialog, Scale
 from tkinter import *
 import vlc
 
-#TODO make it so the pane on the right and the pane for the player controls overlay instead of push out of the way.
 #TODO add a counter (can be true/false) just to keep track of the first instance of a video being played so that both panes won't always appear when the video is paused
 # also as an extension or an alternate solution see if there is another better vlc function for this or make the player pause/play button work differently 
 # make the play button on the right pane be either play or stop and set a T/F variable to show/hide the panes based on that! ie: true means video is playing and don't always show the panes and vice versa
+#TODO fix player control flickering (kinda fixed it is not as bad anymore.) and also player controls hiding when hovering over them
 
 class Song:
     def __init__(self, path, priority=50):
@@ -28,18 +28,22 @@ class MusicPlayer:
         self.previous_cursor_position = (-1, -1)  # Initialize previous cursor position
 
         # Create frame for VLC video
-        self.vlc_frame = tk.Frame(root)
+        self.vlc_frame = tk.Frame(root, bg="black")  # Background black to match video
         self.vlc_frame.grid(row=0, column=0, sticky="nsew")
+
+        # Create frame for controls and playlist
+        self.control_frame = tk.Frame(root)
+        self.control_frame.place(x=650, y=0, width=150, relheight=1)  # Fixed size control panel
+
+        # Create frame for media controls directly below the VLC frame
+        self.media_controls = tk.Frame(root)
+        self.media_controls.place(relx=0, rely=1, anchor="sw", relwidth=1, height=50)  # Snapped to the bottom
 
         # VLC initialization
         self.instance = vlc.Instance()
         self.media_player = self.instance.media_player_new()
 
         root.after(0, self.set_vlc_window)
-
-        # Create frame for controls and playlist
-        self.control_frame = tk.Frame(root)
-        self.control_frame.grid(row=0, column=1, sticky="nsew")
 
         # Create a File Explorer label
         label = Label(self.control_frame, text='File Explorer', width=20, height=2, fg='blue')
@@ -60,10 +64,6 @@ class MusicPlayer:
         # Creating a listbox to display the playlist
         self.listbox = Listbox(self.control_frame)
         self.listbox.grid(row=4, column=0, padx=10, pady=10)
-
-        # Create frame for media controls directly below the VLC frame
-        self.media_controls = tk.Frame(root)
-        self.media_controls.grid(row=1, column=0, columnspan=2, sticky="ew")
 
         # Adding control buttons
         self.button_rewind = Button(self.media_controls, text='<< Rewind', command=self.rewind)
@@ -87,9 +87,11 @@ class MusicPlayer:
         self.volume_control.grid(row=0, column=5, padx=5)
 
         self.root.columnconfigure(0, weight=1)
-        self.root.columnconfigure(1, weight=0)
         self.root.rowconfigure(0, weight=1)
         self.root.rowconfigure(1, weight=0)
+
+        self.root.bind('<Configure>', self.adjust_elements)
+        self.vlc_frame.bind("<Configure>", self.update_vlc_window_size)
 
         # Timer for hiding controls
         self.hide_controls_timer = None
@@ -100,9 +102,40 @@ class MusicPlayer:
         # Show the control frame initially
         self.show_control_frame()
 
+    def adjust_elements(self, event=None):
+        # Maintain aspect ratio for the video
+        video_aspect_ratio = 16 / 9  # Adjust this as per your requirement
+        window_width = self.root.winfo_width() - 150  # Subtract control frame width
+        window_height = self.root.winfo_height() - 50  # Subtract media controls height
+
+        if window_width / window_height > video_aspect_ratio:
+            # Window is wider relative to its height
+            video_height = window_height
+            video_width = int(video_height * video_aspect_ratio)
+        else:
+            # Window is taller relative to its width
+            video_width = window_width
+            video_height = int(video_width / video_aspect_ratio)
+
+        # Adjust the vlc_frame size based on the aspect ratio
+        self.vlc_frame.grid(row=0, column=0, sticky="nsew", ipadx=int((self.root.winfo_width() - 150 - video_width) / 2), ipady=int((self.root.winfo_height() - 50 - video_height) / 2))
+
+        # Update control frame and media controls position consistently
+        self.control_frame.place(x=window_width, y=0, width=150, height=self.root.winfo_height())
+        self.media_controls.place(relx=0, rely=1, anchor="sw", relwidth=1, height=50)
+
+        # Ensure VLC resizes correctly
+        self.update_vlc_window_size()
+
+    def update_vlc_window_size(self, event=None):
+        self.set_vlc_window()
 
     def set_vlc_window(self):
-        self.media_player.set_hwnd(self.vlc_frame.winfo_id())
+        # Ensure the media player is aware of the correct window handle
+        if os.name == "nt":  # For Windows
+            self.media_player.set_hwnd(self.vlc_frame.winfo_id())
+        else:  # For other OSes
+            self.media_player.set_xwindow(self.vlc_frame.winfo_id())
 
     def browseFiles(self, event=None):
         self.file_dialog_open = True  # Set flag to indicate file dialog is open
@@ -179,23 +212,21 @@ class MusicPlayer:
 
     def hide_control_frame(self):
        if self.control_frame_visible:
-           self.control_frame.grid_remove()
+           self.control_frame.place_forget()
            self.control_frame_visible = False
 
     def show_control_frame(self, event=None):
        if not self.control_frame_visible and not self.file_dialog_open:
-           self.control_frame.grid(row=0, column=1, sticky="nsew")
+           window_width = self.root.winfo_width() - 150
+           self.control_frame.place(x=window_width, y=0, width=150, relheight=1)
            self.control_frame_visible = True
 
     def hide_controls(self):
-        self.media_controls.grid_remove()
+        self.media_controls.place_forget()
         self.hide_controls_timer = None
 
     def show_controls(self, event=None):
-        self.media_controls.grid(row=1, column=0, columnspan=2, sticky="ew")
-        if self.hide_controls_timer:
-            self.root.after_cancel(self.hide_controls_timer)
-        self.hide_controls_timer = self.root.after(4000, self.hide_controls)  # Schedule to hide controls after 4 seconds
+        self.media_controls.place(relx=0, rely=1, anchor="sw", relwidth=1, height=50)
 
     def poll_mouse_position(self):
         # Get the mouse position relative to the root window
@@ -219,7 +250,7 @@ class MusicPlayer:
             # If the cursor position is unchanged for 40 checks (4 seconds), hide the controls
             if self.cursor_position_unchanged_counter >= 40:
                 self.hide_controls()
-            else:
+            elif not self.media_controls.winfo_ismapped(): # Only show controls if not visible already
                 self.show_controls()
 
             # Check if mouse is near the right edge for context menu visibility
