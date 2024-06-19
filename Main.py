@@ -8,7 +8,6 @@ import vlc
 #TODO add a counter (can be true/false) just to keep track of the first instance of a video being played so that both panes won't always appear when the video is paused
 # also as an extension or an alternate solution see if there is another better vlc function for this or make the player pause/play button work differently 
 # make the play button on the right pane be either play or stop and set a T/F variable to show/hide the panes based on that! ie: true means video is playing and don't always show the panes and vice versa
-#TODO fix player control flickering (kinda fixed it is not as bad anymore.) and also player controls hiding when hovering over them
 
 class Song:
     def __init__(self, path, priority=50):
@@ -26,6 +25,8 @@ class MusicPlayer:
         self.full_screen = False  # Flag to track full screen state
         self.cursor_position_unchanged_counter = 0
         self.previous_cursor_position = (-1, -1)  # Initialize previous cursor position
+        self.video_loaded = False  # Flag to track if a video is loaded
+        self.is_playing = False  # Flag to track if the video is currently playing
 
         # Create frame for VLC video
         self.vlc_frame = tk.Frame(root, bg="black")  # Background black to match video
@@ -86,6 +87,10 @@ class MusicPlayer:
         self.volume_control.set(60)  # Set default volume to 50%
         self.volume_control.grid(row=0, column=5, padx=5)
 
+        # Adding a stop button
+        self.button_stop = Button(self.media_controls, text='Stop', command=self.stop)
+        self.button_stop.grid(row=0, column=6, padx=5)
+
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
         self.root.rowconfigure(1, weight=0)
@@ -98,9 +103,6 @@ class MusicPlayer:
 
         # Start polling for mouse position
         self.poll_mouse_position()
-
-        # Show the control frame initially
-        self.show_control_frame()
 
     def adjust_elements(self, event=None):
         # Maintain aspect ratio for the video
@@ -119,10 +121,6 @@ class MusicPlayer:
 
         # Adjust the vlc_frame size based on the aspect ratio
         self.vlc_frame.grid(row=0, column=0, sticky="nsew", ipadx=int((self.root.winfo_width() - 150 - video_width) / 2), ipady=int((self.root.winfo_height() - 50 - video_height) / 2))
-
-        # Update control frame and media controls position consistently
-        self.control_frame.place(x=window_width, y=0, width=150, height=self.root.winfo_height())
-        self.media_controls.place(relx=0, rely=1, anchor="sw", relwidth=1, height=50)
 
         # Ensure VLC resizes correctly
         self.update_vlc_window_size()
@@ -173,14 +171,17 @@ class MusicPlayer:
         self.media_player.set_media(media)
         self.media_player.play()
         self.button_play_pause.config(text="Pause")
+        self.video_loaded = True  # Set flag to indicate video is loaded
 
     def toggle_play_pause(self):
         if self.media_player.is_playing():
             self.media_player.pause()
             self.button_play_pause.config(text="Play")
+            self.is_playing = False
         else:
             self.media_player.play()
             self.button_play_pause.config(text="Pause")
+            self.is_playing = True
 
     def rewind(self):
         current_time = self.media_player.get_time()
@@ -206,9 +207,14 @@ class MusicPlayer:
         self.media_player.set_media(media)
         self.media_player.play()
         self.button_play_pause.config(text="Pause")
+        self.video_loaded = True  # Set flag to indicate video is loaded
 
     def set_volume(self, volume):
         self.media_player.audio_set_volume(int(volume))
+
+    def stop(self):
+        self.media_player.stop()
+        self.video_loaded = False  # Reset flag to indicate video is unloaded
 
     def hide_control_frame(self):
        if self.control_frame_visible:
@@ -234,11 +240,12 @@ class MusicPlayer:
         mouse_y = self.root.winfo_pointery() - self.root.winfo_rooty()
 
         window_width = self.root.winfo_width()
+        window_height = self.root.winfo_height()
 
         # Get the mouse position relative to the VLC video area
         cursor_position = self.media_player.video_get_cursor()
 
-        if self.media_player.is_playing():
+        if self.video_loaded :
             # Check if the cursor position is the same as the previous position
             if cursor_position == self.previous_cursor_position:
                 self.cursor_position_unchanged_counter += 1
@@ -246,20 +253,26 @@ class MusicPlayer:
                 self.cursor_position_unchanged_counter = 0
 
             self.previous_cursor_position = cursor_position
-
-            # If the cursor position is unchanged for 40 checks (4 seconds), hide the controls
-            if self.cursor_position_unchanged_counter >= 40:
+            
+            if 0 <= mouse_x < window_width and 0 <= mouse_y < window_height:
+                # If the cursor position is unchanged for 40 checks (4 seconds) and the mouse is not over the controls, hide the controls
+                if self.cursor_position_unchanged_counter >= 40 and not mouse_y >= window_height - 50:
+                    self.hide_controls()
+                elif not self.media_controls.winfo_ismapped(): # Only show controls if not visible already
+                    self.show_controls()
+            else:
                 self.hide_controls()
-            elif not self.media_controls.winfo_ismapped(): # Only show controls if not visible already
-                self.show_controls()
-
-            # Check if mouse is near the right edge for context menu visibility
-            if mouse_x >= window_width - 100:
-                self.show_control_frame()
+            # Check if mouse is within window bounds
+            if 0 <= mouse_x < window_width and 0 <= mouse_y < window_height:
+                # Check if mouse is near the right edge for context menu visibility
+                if mouse_x >= window_width - 100:
+                    self.show_control_frame()
+                else:
+                    self.hide_control_frame()
             else:
                 self.hide_control_frame()
 
-        else:
+        elif not self.is_playing:
             # Reset the counter and make sure the controls are visible while the video is not playing
             self.cursor_position_unchanged_counter = 0
             self.show_controls()
